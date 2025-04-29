@@ -1,0 +1,20 @@
+{
+  "name": "polycloud-websocket-backend",
+  "version": "1.0.0",
+  "description": "WebSocket backend for Polycloud WebRTC demo",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "jest",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "express": "^4.17.3",
+    "ws": "^8.5.0",
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "jest": "^27.5.1",
+    "nodemon": "^2.0.15"
+  }
+}

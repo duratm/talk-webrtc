@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket WebRTC Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .video-container {
+            flex: 1;
+            min-width: 300px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        video {
+            width: 100%;
+            background-color: #f0f0f0;
+        }
+        .controls {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
+        }
+        .status {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #e0f7fa;
+            border-radius: 5px;
+        }
+        .client-list {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f0f4c3;
+            border-radius: 5px;
+        }
+        button {
+            padding: 8px 16px;
+            margin-right: 10px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket WebRTC Demo</h1>
+
+    <div class="status" id="connectionStatus">
+        Connection Status: Disconnected
+    </div>
+
+    <div class="controls">
+        <button id="connectBtn">Connect</button>
+        <button id="startMediaBtn" disabled>Start Media</button>
+        <button id="stopMediaBtn" disabled>Stop Media</button>
+        <input type="text" id="roomInput" placeholder="Room ID">
+        <button id="joinRoomBtn" disabled>Join Room</button>
+    </div>
+
+    <div class="controls" style="margin-top: 10px; background-color: #e8f5e9;">
+        <button id="pingBtn" disabled>Send Ping</button>
+        <input type="text" id="pingMessage" placeholder="Ping message (optional)">
+        <span id="pingStatus" style="margin-left: 10px; font-style: italic;"></span>
+    </div>
+
+    <div class="controls" style="margin-top: 10px; background-color: #e1f5fe;">
+        <button id="playSongBtn" disabled>Play Song</button>
+        <input type="file" id="songFileInput" accept="audio/*" style="display: none;">
+        <button id="selectSongBtn" disabled>Select Song File</button>
+        <span id="songStatus" style="margin-left: 10px; font-style: italic;"></span>
+    </div>
+
+    <div class="container">
+        <div class="video-container">
+            <h3>Local Video</h3>
+            <video id="localVideo" autoplay muted playsinline></video>
+        </div>
+        <div class="video-container">
+            <h3>Remote Video</h3>
+            <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+    </div>
+
+    <div class="client-list">
+        <h3>Connected Clients</h3>
+        <ul id="clientsList"></ul>
+    </div>
+
+    <script>
+        // DOM Elements
+        const connectBtn = document.getElementById('connectBtn');
+        const startMediaBtn = document.getElementById('startMediaBtn');
+        const stopMediaBtn = document.getElementById('stopMediaBtn');
+        const joinRoomBtn = document.getElementById('joinRoomBtn');
+        const roomInput = document.getElementById('roomInput');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const clientsList = document.getElementById('clientsList');
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const pingBtn = document.getElementById('pingBtn');
+        const pingMessage = document.getElementById('pingMessage');
+        const pingStatus = document.getElementById('pingStatus');
+
+        // Song elements
+        const playSongBtn = document.getElementById('playSongBtn');
+        const selectSongBtn = document.getElementById('selectSongBtn');
+        const songFileInput = document.getElementById('songFileInput');
+        const songStatus = document.getElementById('songStatus');
+
+        // WebSocket connection
+        let ws;
+        let clientId;
+        let mediaStream;
+        let mediaRecorder;
+        let chunks = [];
+        let isRecording = false;
+
+        // Audio processing variables
+        let audioContext;
+        let audioSource;
+        let audioProcessor;
+        let audioAnalyser;
+        let audioSampleRate = 44100;
+        let audioBufferSize = 4096;
+        let audioSendInterval;
+
+        // Audio playback variables
+        let remoteAudioContext;
+        let remoteAudioBuffer;
+        let remoteAudioSource;
+        let remoteAudioQueue = [];
+
+        // Song variables
+        let songAudioContext;
+        let songAudioBuffer;
+        let songAudioSource;
+        let songAudioAnalyser;
+        let songAudioProcessor;
+        let songData;
+        let isSongPlaying = false;
+        let songChunkSize = 4096; // Size of song chunks to send
+        let songSendInterval;
+
+        // Connect to WebSocket server
+        connectBtn.addEventListener('click', () => {
+            // Stop any existing health check
+            stopWebSocketHealthCheck();
+
+            // Close existing connection if any
+            if (ws) {
+                ws.close();
+            }
+
+            // Create new WebSocket connection
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}`;
+
+            connectionStatus.textContent = 'Connection Status: Connecting...';
+
+            ws = new WebSocket(wsUrl);
+
+            // WebSocket event handlers
+            ws.onopen = () => {
+                connectionStatus.textContent = 'Connection Status: Connected';
+                connectionStatus.style.backgroundColor = '#e0f7fa'; // Reset background color
+                startMediaBtn.disabled = false;
+                joinRoomBtn.disabled = false;
+                pingBtn.disabled = false;
+                selectSongBtn.disabled = false;
+                playSongBtn.disabled = false;
+
+                // Start WebSocket health check
+                startWebSocketHealthCheck();
+            };
+
+            ws.onclose = () => {
+                connectionStatus.textContent = 'Connection Status: Disconnected';
+                connectionStatus.style.backgroundColor = '#ffcdd2'; // Red background for disconnected
+                startMediaBtn.disabled = true;
+                stopMediaBtn.disabled = true;
+                joinRoomBtn.disabled = true;
+                pingBtn.disabled = true;
+                selectSongBtn.disabled = true;
+                playSongBtn.disabled = true;
+                clientId = null;
+
+                // Stop WebSocket health check
+                stopWebSocketHealthCheck();
+
+                // Stop song if playing
+                if (isSongPlaying) {
+                    stopSong();
+                    playSongBtn.textContent = 'Play Song';
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                connectionStatus.textContent = 'Connection Status: Error';
+                connectionStatus.style.backgroundColor = '#ffcdd2'; // Red background for error
+
+                // Stop WebSocket health check
+                stopWebSocketHealthCheck();
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+
+                    // Handle different message types
+                    switch (data.type) {
+                        case 'connection':
+                            clientId = data.clientId;
+                            connectionStatus.textContent = `Connection Status: Connected (ID: ${clientId})`;
+                            break;
+
+                        case 'client-list':
+                            updateClientsList(data.clients);
+                            break;
+
+                        case 'media-chunk':
+                            handleMediaChunk(data);
+                            break;
+
+                        case 'room-joined':
+                            connectionStatus.textContent = `Connection Status: Connected (ID: ${clientId}, Room: ${data.roomId})`;
+                            break;
+
+                        case 'ping':
+                            console.log(`Received ping from ${data.senderId}: ${data.message || 'No message'}`);
+                            // Send pong response back to the sender
+                            if (ws && ws.readyState === WebSocket.OPEN) {
+                                ws.send(JSON.stringify({
+                                    type: 'pong',
+                                    targetId: data.senderId,
+                                    message: `Received your ping: ${data.message || 'No message'}`,
+                                    timestamp: Date.now()
+                                }));
+                            }
+                            // Show notification
+                            pingStatus.textContent = `Received ping from ${data.senderId}: ${data.message || 'No message'}`;
+                            pingStatus.style.color = '#2196f3';
+                            setTimeout(() => {
+                                pingStatus.textContent = '';
+                            }, 5000);
+                            break;
+
+                        case 'pong':
+                            console.log(`Received pong: ${data.message}`);
+                            // Show notification
+                            pingStatus.textContent = `Received pong: ${data.message}`;
+                            pingStatus.style.color = '#4caf50';
+                            setTimeout(() => {
+                                pingStatus.textContent = '';
+                            }, 5000);
+                            break;
+
+                        case 'ping-error':
+                            console.log(`Ping error: ${data.message}`);
+                            // Show notification
+                            pingStatus.textContent = `Ping error: ${data.message}`;
+                            pingStatus.style.color = '#f44336';
+                            setTimeout(() => {
+                                pingStatus.textContent = '';
+                            }, 5000);
+                            break;
+
+                        case 'ping-info':
+                            console.log(`Ping info: ${data.message}`);
+                            // Show notification
+                            pingStatus.textContent = `Ping info: ${data.message}`;
+                            pingStatus.style.color = '#ff9800';
+                            setTimeout(() => {
+                                pingStatus.textContent = '';
+                            }, 5000);
+                            break;
+
+                        default:
+                            console.log('Received unknown message type:', data.type);
+                    }
+                } catch (error) {
+                    console.error('Error processing message:', error);
+                }
+            };
+        });
+
+        // WebSocket health check function
+        function startWebSocketHealthCheck() {
+            if (window.wsHealthCheckInterval) {
+                clearInterval(window.wsHealthCheckInterval);
+            }
+
+            window.wsHealthCheckInterval = setInterval(() => {
+                if (ws) {
+                    if (ws.readyState !== WebSocket.OPEN) {
+                        console.warn(`WebSocket not open, current state: ${ws.readyState}`);
+                        connectionStatus.textContent = `Connection Status: Issue detected (state: ${ws.readyState})`;
+                        connectionStatus.style.backgroundColor = '#ffcdd2';
+
+                        // Try to reconnect if closed or closing
+                        if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+                            console.log('Attempting to reconnect...');
+                            connectBtn.click();
+                        }
+                    } else {
+                        // Send a small ping to keep the connection alive
+                        try {
+                            ws.send(JSON.stringify({ type: 'heartbeat', timestamp: Date.now() }));
+                        } catch (e) {
+                            console.error('Error sending heartbeat:', e);
+                        }
+                    }
+                }
+            }, 10000); // Check every 10 seconds
+        }
+
+        // Stop WebSocket health check
+        function stopWebSocketHealthCheck() {
+            if (window.wsHealthCheckInterval) {
+                clearInterval(window.wsHealthCheckInterval);
+                window.wsHealthCheckInterval = null;
+            }
+        }
+
+        // Start media capture
+        startMediaBtn.addEventListener('click', async () => {
+            try {
+                // Get user media (audio and video)
+                mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+
+                // Display local video
+                localVideo.srcObject = mediaStream;
+
+                // Create a canvas element for capturing frames
+                if (!window.captureCanvas) {
+                    window.captureCanvas = document.createElement('canvas');
+                    window.captureCanvasContext = window.captureCanvas.getContext('2d');
+                }
+
+                // Set canvas size to match video dimensions
+                const videoTrack = mediaStream.getVideoTracks()[0];
+                const settings = videoTrack.getSettings();
+                window.captureCanvas.width = settings.width || 640;
+                window.captureCanvas.height = settings.height || 480;
+
+                console.log(`Canvas size set to ${window.captureCanvas.width}x${window.captureCanvas.height}`);
+
+                // Create media recorder with simpler codec for compatibility
+                const options = { 
+                    mimeType: 'video/webm;codecs=vp8',
+                    videoBitsPerSecond: 250000 // Lower bitrate for smaller chunks
+                };
+
+                try {
+                    mediaRecorder = new MediaRecorder(mediaStream, options);
+                    console.log('Using codec: video/webm;codecs=vp8');
+                } catch (e) {
+                    console.warn('vp8 codec not supported, trying fallback options');
+
+                    // Try alternative codecs if vp8 is not supported
+                    const fallbackOptions = [
+                        { mimeType: 'video/webm' },
+                        { mimeType: 'video/mp4' },
+                        {} // Empty options as last resort
+                    ];
+
+                    for (const opt of fallbackOptions) {
+                        try {
+                            mediaRecorder = new MediaRecorder(mediaStream, opt);
+                            console.log(`Using codec: ${opt.mimeType || 'default'}`);
+                            break;
+                        } catch (e) {
+                            console.warn(`Codec ${opt.mimeType || 'default'} not supported`);
+                        }
+                    }
+                }
+
+                // Set up frame capture interval
+                window.frameCapture = setInterval(() => {
+                    try {
+                        // Draw current video frame to canvas
+                        window.captureCanvasContext.drawImage(localVideo, 0, 0, window.captureCanvas.width, window.captureCanvas.height);
+
+                        // Convert canvas to JPEG data URL
+                        const dataURL = window.captureCanvas.toDataURL('image/jpeg', 0.7); // 0.7 quality for better compression
+
+                        // Extract base64 data
+                        const base64data = dataURL.split(',')[1];
+
+                        // Send the frame via WebSocket
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                            const message = {
+                                type: 'media-chunk',
+                                mediaType: 'video-frame', // Indicate this is a single frame
+                                chunk: base64data,
+                                timestamp: Date.now(),
+                                format: 'jpeg' // Indicate the format
+                            };
+
+                            // If a target client is selected, include the targetId
+                            if (window.selectedTargetId) {
+                                message.targetId = window.selectedTargetId;
+                                console.log(`Sending frame to target: ${window.selectedTargetId}`);
+                            } else {
+                                console.log(`Broadcasting frame to room`);
+                            }
+
+                            ws.send(JSON.stringify(message));
+                        }
+                    } catch (error) {
+                        console.error('Error capturing or sending frame:', error);
+                    }
+                }, 200); // Send 5 frames per second
+
+                // Set up audio processing
+                try {
+                    // Create audio context
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                        sampleRate: audioSampleRate
+                    });
+
+                    // Get audio track from media stream
+                    const audioTrack = mediaStream.getAudioTracks()[0];
+                    if (audioTrack) {
+                        console.log('Audio track found, setting up audio processing');
+
+                        // Create audio source from media stream
+                        audioSource = audioContext.createMediaStreamSource(mediaStream);
+
+                        // Create analyser to detect audio levels
+                        audioAnalyser = audioContext.createAnalyser();
+                        audioAnalyser.fftSize = 256;
+                        audioSource.connect(audioAnalyser);
+
+                        // Create script processor for audio processing
+                        // Note: ScriptProcessorNode is deprecated but still widely supported
+                        // In a production app, consider using AudioWorklet instead
+                        audioProcessor = audioContext.createScriptProcessor(audioBufferSize, 1, 1);
+
+                        // Connect the audio processing chain
+                        audioSource.connect(audioProcessor);
+                        audioProcessor.connect(audioContext.destination);
+
+                        // Process audio data
+                        audioProcessor.onaudioprocess = (e) => {
+                            // Only process if we're recording and connected
+                            if (isRecording && ws && ws.readyState === WebSocket.OPEN) {
+                                // Get audio data from input channel
+                                const inputData = e.inputBuffer.getChannelData(0);
+
+                                // Downsample and convert to 16-bit PCM
+                                const downsampledBuffer = downsampleAudio(inputData, audioContext.sampleRate, 8000);
+
+                                // Convert to base64 for transmission
+                                const base64Audio = arrayBufferToBase64(downsampledBuffer.buffer);
+
+                                // Send audio chunk
+                                const message = {
+                                    type: 'media-chunk',
+                                    mediaType: 'audio',
+                                    chunk: base64Audio,
+                                    timestamp: Date.now(),
+                                    sampleRate: 8000, // Downsampled rate
+                                    format: 'pcm'
+                                };
+
+                                // If a target client is selected, include the targetId
+                                if (window.selectedTargetId) {
+                                    message.targetId = window.selectedTargetId;
+                                    console.log(`Sending audio to target: ${window.selectedTargetId}`);
+                                }
+
+                                ws.send(JSON.stringify(message));
+                            }
+                        };
+
+                        console.log('Audio processing set up successfully');
+                    } else {
+                        console.warn('No audio track found in media stream');
+                    }
+                } catch (audioError) {
+                    console.error('Error setting up audio processing:', audioError);
+                }
+
+                // We're not using MediaRecorder anymore, just set the flag
+                isRecording = true;
+
+                // Update UI
+                startMediaBtn.disabled = true;
+                stopMediaBtn.disabled = false;
+
+            } catch (error) {
+                console.error('Error accessing media devices:', error);
+                alert('Error accessing media devices: ' + error.message);
+            }
+        });
+
+        // Stop media capture
+        stopMediaBtn.addEventListener('click', () => {
+            // Stop frame capture interval
+            if (window.frameCapture) {
+                clearInterval(window.frameCapture);
+                window.frameCapture = null;
+                console.log('Frame capture interval stopped');
+            }
+
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+            }
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+
+            // Clean up audio resources
+            if (audioProcessor) {
+                audioProcessor.disconnect();
+                audioProcessor = null;
+                console.log('Audio processor disconnected');
+            }
+
+            if (audioSource) {
+                audioSource.disconnect();
+                audioSource = null;
+                console.log('Audio source disconnected');
+            }
+
+            if (audioContext) {
+                // Close the audio context if supported
+                if (audioContext.state !== 'closed' && audioContext.close) {
+                    audioContext.close().then(() => {
+                        console.log('Audio context closed');
+                    }).catch(err => {
+                        console.error('Error closing audio context:', err);
+                    });
+                }
+                audioContext = null;
+            }
+
+            // Clear video elements
+            localVideo.srcObject = null;
+
+            // Reset frame image if it exists
+            if (window.frameImage) {
+                window.frameImage.src = '';
+                console.log('Frame image cleared');
+            }
+
+            // Update UI
+            startMediaBtn.disabled = false;
+            stopMediaBtn.disabled = true;
+        });
+
+        // Join room
+        joinRoomBtn.addEventListener('click', () => {
+            const roomId = roomInput.value.trim();
+
+            if (!roomId) {
+                alert('Please enter a room ID');
+                return;
+            }
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                console.log(`Joining room: ${roomId}`);
+                ws.send(JSON.stringify({
+                    type: 'join-room',
+                    roomId: roomId
+                }));
+
+                // Store the room ID in a global variable for reference
+                window.currentRoomId = roomId;
+
+                // Clear any selected target when joining a new room
+                window.selectedTargetId = null;
+
+                // Update UI to show we're joining a room
+                connectionStatus.textContent = `Connection Status: Joining room ${roomId}...`;
+            }
+        });
+
+        // Send ping
+        pingBtn.addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = pingMessage.value.trim();
+                console.log(`Sending ping${message ? ': ' + message : ''}`);
+
+                // Create ping message
+                const pingData = {
+                    type: 'ping',
+                    message: message,
+                    timestamp: Date.now()
+                };
+
+                // If a target client is selected, include the targetId
+                if (window.selectedTargetId) {
+                    pingData.targetId = window.selectedTargetId;
+                    console.log(`Sending ping to target: ${window.selectedTargetId}`);
+                    pingStatus.textContent = `Sending ping to ${window.selectedTargetId}...`;
+                } else {
+                    console.log('Broadcasting ping to room');
+                    pingStatus.textContent = 'Broadcasting ping to room...';
+                }
+
+                pingStatus.style.color = '#9e9e9e';
+
+                // Send ping message
+                ws.send(JSON.stringify(pingData));
+
+                // Clear ping message input
+                pingMessage.value = '';
+            } else {
+                console.error('WebSocket not connected, cannot send ping');
+                pingStatus.textContent = 'Error: WebSocket not connected';
+                pingStatus.style.color = '#f44336';
+                setTimeout(() => {
+                    pingStatus.textContent = '';
+                }, 5000);
+            }
+        });
+
+        // Update clients list
+        function updateClientsList(clients) {
+            clientsList.innerHTML = '';
+
+            // Group clients by room
+            const clientsByRoom = {};
+            clients.forEach(client => {
+                const roomId = client.roomId || 'No Room';
+                if (!clientsByRoom[roomId]) {
+                    clientsByRoom[roomId] = [];
+                }
+                clientsByRoom[roomId].push(client);
+            });
+
+            // Create a header for each room
+            for (const [roomId, roomClients] of Object.entries(clientsByRoom)) {
+                const roomHeader = document.createElement('div');
+                roomHeader.style.fontWeight = 'bold';
+                roomHeader.style.marginTop = '10px';
+                roomHeader.style.backgroundColor = '#e0e0e0';
+                roomHeader.style.padding = '5px';
+
+                // Highlight the current user's room
+                if (window.currentRoomId === roomId) {
+                    roomHeader.style.backgroundColor = '#c8e6c9';
+                    roomHeader.textContent = `Room: ${roomId} (Your Room)`;
+                } else {
+                    roomHeader.textContent = `Room: ${roomId}`;
+                }
+
+                clientsList.appendChild(roomHeader);
+
+                // Add clients in this room
+                roomClients.forEach(client => {
+                    const li = document.createElement('li');
+                    li.style.marginLeft = '10px';
+                    li.textContent = `Client ID: ${client.id}`;
+
+                    // Highlight clients in the same room as the current user
+                    if (window.currentRoomId === client.roomId) {
+                        li.style.color = '#2e7d32';
+                    }
+
+                    // Add button to select this client as target
+                    if (client.id !== clientId) {
+                        const selectBtn = document.createElement('button');
+                        selectBtn.textContent = 'Select as Target';
+                        selectBtn.onclick = () => selectTarget(client.id);
+                        li.appendChild(selectBtn);
+                    } else {
+                        li.textContent += ' (You)';
+                        li.style.fontWeight = 'bold';
+                    }
+
+                    clientsList.appendChild(li);
+                });
+            }
+
+            // Add a note about selecting targets
+            const note = document.createElement('p');
+            note.style.marginTop = '10px';
+            note.style.fontSize = '0.9em';
+            note.style.fontStyle = 'italic';
+            note.textContent = 'Note: Select a target to send video only to that client, or leave unselected to broadcast to everyone in your room.';
+            clientsList.appendChild(note);
+        }
+
+        // Select target client
+        function selectTarget(targetId) {
+            // If the target is already selected, clear it (toggle behavior)
+            if (window.selectedTargetId === targetId) {
+                window.selectedTargetId = null;
+                console.log('Cleared selected target, now broadcasting to room');
+
+                // Update UI to show no target is selected
+                const items = clientsList.querySelectorAll('li');
+                items.forEach(item => {
+                    // Reset all items except the current user
+                    if (!item.textContent.includes('(You)')) {
+                        item.style.fontWeight = 'normal';
+                        item.style.backgroundColor = '';
+                    }
+                });
+
+                // Show a notification
+                const notification = document.createElement('div');
+                notification.textContent = 'Now broadcasting to everyone in your room';
+                notification.style.position = 'fixed';
+                notification.style.top = '20px';
+                notification.style.left = '50%';
+                notification.style.transform = 'translateX(-50%)';
+                notification.style.backgroundColor = '#4caf50';
+                notification.style.color = 'white';
+                notification.style.padding = '10px';
+                notification.style.borderRadius = '5px';
+                notification.style.zIndex = '1000';
+
+                document.body.appendChild(notification);
+                setTimeout(() => {
+                    document.body.removeChild(notification);
+                }, 3000);
+            } else {
+                // Store target ID in a global variable
+                window.selectedTargetId = targetId;
+                console.log(`Selected client ${targetId} as target`);
+
+                // Update UI to show selected target
+                const items = clientsList.querySelectorAll('li');
+                items.forEach(item => {
+                    if (item.textContent.includes(targetId)) {
+                        item.style.fontWeight = 'bold';
+                        item.style.backgroundColor = '#e3f2fd';
+                    } else if (!item.textContent.includes('(You)')) {
+                        item.style.fontWeight = 'normal';
+                        item.style.backgroundColor = '';
+                    }
+                });
+
+                // Show a notification
+                const notification = document.createElement('div');
+                notification.textContent = `Now sending video only to client ${targetId}`;
+                notification.style.position = 'fixed';
+                notification.style.top = '20px';
+                notification.style.left = '50%';
+                notification.style.transform = 'translateX(-50%)';
+                notification.style.backgroundColor = '#2196f3';
+                notification.style.color = 'white';
+                notification.style.padding = '10px';
+                notification.style.borderRadius = '5px';
+                notification.style.zIndex = '1000';
+
+                document.body.appendChild(notification);
+                setTimeout(() => {
+                    document.body.removeChild(notification);
+                }, 3000);
+            }
+        }
+
+        // Handle incoming media chunks
+        function handleMediaChunk(data) {
+            try {
+                console.log(`Received media chunk from ${data.senderId}, type: ${data.mediaType}, format: ${data.format || 'unknown'}, size: ${data.chunk ? data.chunk.length : 0} bytes`);
+
+                // Check if we have valid chunk data
+                if (!data.chunk) {
+                    console.error('Received empty media chunk');
+                    return;
+                }
+
+                // Ensure the base64 string is properly formatted
+                // Remove any non-base64 characters and ensure proper padding
+                let base64String = data.chunk.replace(/[^A-Za-z0-9+/]/g, '');
+                console.log(`Base64 string length after cleaning: ${base64String.length}`);
+
+                // Add padding if needed
+                while (base64String.length % 4 !== 0) {
+                    base64String += '=';
+                }
+
+                // Handle audio chunks
+                if (data.mediaType === 'audio') {
+                    try {
+                        // Check if this is a song chunk
+                        if (data.isSong) {
+                            console.log('Processing song chunk from ' + data.senderId);
+                        } else {
+                            console.log('Processing audio chunk from ' + data.senderId);
+                        }
+
+                        // Convert base64 to ArrayBuffer
+                        const audioArrayBuffer = base64ToArrayBuffer(base64String);
+
+                        // Convert to Float32Array for Web Audio API
+                        const audioData = new Float32Array(audioArrayBuffer);
+
+                        // Get sample rate from data or use default
+                        const sampleRate = data.sampleRate || 8000;
+
+                        // Play the audio chunk
+                        playAudioChunk(audioData, sampleRate);
+
+                        return; // Exit after handling audio
+                    } catch (audioError) {
+                        console.error('Error processing audio chunk:', audioError);
+                    }
+                }
+
+                // Handle video frames
+                try {
+                    // Create a blob from the base64 data
+                    const byteCharacters = atob(base64String);
+                    console.log(`Decoded byte length: ${byteCharacters.length}`);
+
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+
+                    const byteArray = new Uint8Array(byteNumbers);
+
+                    // Determine the correct MIME type based on the data format
+                    let mimeType = 'image/jpeg'; // Default to JPEG
+
+                    if (data.mediaType === 'video-frame') {
+                        // If it's explicitly a video frame, use the specified format
+                        if (data.format === 'jpeg') {
+                            mimeType = 'image/jpeg';
+                        } else if (data.format === 'png') {
+                            mimeType = 'image/png';
+                        }
+                    }
+
+                    // Create a blob with the appropriate MIME type
+                    const blob = new Blob([byteArray], { type: mimeType });
+                    console.log(`Created blob of size: ${blob.size} bytes, type: ${mimeType}`);
+
+                    // Create object URL from blob
+                    const url = URL.createObjectURL(blob);
+                    console.log(`Created object URL: ${url}`);
+
+                    // Create an image element to display the frame if it doesn't exist
+                    if (!window.frameImage) {
+                        console.log('Creating new image element for frames');
+                        window.frameImage = document.createElement('img');
+                        window.frameImage.style.width = '100%';
+                        window.frameImage.style.height = 'auto';
+
+                        // Clear the video element and replace with the image
+                        const videoContainer = remoteVideo.parentElement;
+                        remoteVideo.style.display = 'none';
+                        videoContainer.appendChild(window.frameImage);
+                    }
+
+                    // Update the image source with the new frame
+                    window.frameImage.onload = () => {
+                        console.log('Frame image loaded successfully');
+                        // Revoke the old URL to avoid memory leaks
+                        URL.revokeObjectURL(url);
+                    };
+
+                    window.frameImage.onerror = (e) => {
+                        console.error('Error loading frame image:', e);
+
+                        // If the current format fails, try the alternative
+                        if (mimeType === 'image/jpeg') {
+                            const pngBlob = new Blob([byteArray], { type: 'image/png' });
+                            const pngUrl = URL.createObjectURL(pngBlob);
+                            console.log('Trying PNG format instead');
+                            window.frameImage.src = pngUrl;
+                        } else {
+                            const jpegBlob = new Blob([byteArray], { type: 'image/jpeg' });
+                            const jpegUrl = URL.createObjectURL(jpegBlob);
+                            console.log('Trying JPEG format instead');
+                            window.frameImage.src = jpegUrl;
+                        }
+                    };
+
+                    // Set the image source to display the frame
+                    window.frameImage.src = url;
+
+                } catch (decodeError) {
+                    console.error('Error decoding base64 or creating blob:', decodeError);
+                }
+            } catch (error) {
+                console.error('Error processing media chunk:', error);
+                // Skip this chunk if there's an error
+            }
+        }
+        // Helper function to downsample audio
+        function downsampleAudio(audioBuffer, originalSampleRate, targetSampleRate) {
+            if (originalSampleRate === targetSampleRate) {
+                return audioBuffer;
+            }
+
+            const ratio = originalSampleRate / targetSampleRate;
+            const newLength = Math.round(audioBuffer.length / ratio);
+            const result = new Float32Array(newLength);
+
+            let offsetResult = 0;
+            let offsetBuffer = 0;
+
+            while (offsetResult < result.length) {
+                const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+                let accum = 0;
+                let count = 0;
+
+                for (let i = offsetBuffer; i < nextOffsetBuffer && i < audioBuffer.length; i++) {
+                    accum += audioBuffer[i];
+                    count++;
+                }
+
+                result[offsetResult] = accum / count;
+                offsetResult++;
+                offsetBuffer = nextOffsetBuffer;
+            }
+
+            return result;
+        }
+
+        // Helper function to convert ArrayBuffer to Base64
+        function arrayBufferToBase64(buffer) {
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return window.btoa(binary);
+        }
+
+        // Helper function to convert Base64 to ArrayBuffer
+        function base64ToArrayBuffer(base64) {
+            const binaryString = window.atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        // Helper function to play audio
+        function playAudioChunk(audioData, sampleRate) {
+            if (!remoteAudioContext) {
+                try {
+                    remoteAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    console.log('Remote audio context created');
+                } catch (e) {
+                    console.error('Failed to create remote audio context:', e);
+                    return;
+                }
+            }
+
+            try {
+                // Convert audio data to AudioBuffer
+                const audioBuffer = remoteAudioContext.createBuffer(1, audioData.length, sampleRate);
+                const channelData = audioBuffer.getChannelData(0);
+
+                // Copy data to channel
+                for (let i = 0; i < audioData.length; i++) {
+                    channelData[i] = audioData[i];
+                }
+
+                // Create source and play
+                const source = remoteAudioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(remoteAudioContext.destination);
+                source.start(0);
+                console.log('Playing audio chunk');
+
+                // Store reference to clean up later
+                remoteAudioSource = source;
+            } catch (e) {
+                console.error('Error playing audio chunk:', e);
+            }
+        }
+
+        // Song file selection
+        selectSongBtn.addEventListener('click', () => {
+            songFileInput.click();
+        });
+
+        // Song file input change
+        songFileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                console.log('No file selected');
+                return;
+            }
+
+            songStatus.textContent = `Loading song: ${file.name}`;
+            songStatus.style.color = '#9e9e9e';
+
+            // Create a new audio context for the song
+            if (!songAudioContext) {
+                try {
+                    songAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                } catch (e) {
+                    console.error('Failed to create song audio context:', e);
+                    songStatus.textContent = 'Error: Could not create audio context';
+                    songStatus.style.color = '#f44336';
+                    return;
+                }
+            }
+
+            // Read the file
+            const reader = new FileReader();
+
+            reader.onload = (e) => {
+                // Decode the audio data
+                songAudioContext.decodeAudioData(e.target.result)
+                    .then(buffer => {
+                        songAudioBuffer = buffer;
+                        songStatus.textContent = `Song loaded: ${file.name} (${Math.round(buffer.duration)}s)`;
+                        songStatus.style.color = '#4caf50';
+                        console.log(`Song loaded: ${file.name}, duration: ${buffer.duration}s, sample rate: ${buffer.sampleRate}Hz, channels: ${buffer.numberOfChannels}`);
+                    })
+                    .catch(err => {
+                        console.error('Error decoding audio data:', err);
+                        songStatus.textContent = 'Error: Could not decode audio file';
+                        songStatus.style.color = '#f44336';
+                    });
+            };
+
+            reader.onerror = (e) => {
+                console.error('Error reading file:', e);
+                songStatus.textContent = 'Error: Could not read file';
+                songStatus.style.color = '#f44336';
+            };
+
+            reader.readAsArrayBuffer(file);
+        });
+
+        // Play song button
+        playSongBtn.addEventListener('click', () => {
+            if (isSongPlaying) {
+                stopSong();
+                playSongBtn.textContent = 'Play Song';
+                songStatus.textContent = 'Song stopped';
+                songStatus.style.color = '#9e9e9e';
+            } else {
+                if (!songAudioBuffer) {
+                    songStatus.textContent = 'Error: No song loaded';
+                    songStatus.style.color = '#f44336';
+                    return;
+                }
+
+                playSong();
+                playSongBtn.textContent = 'Stop Song';
+                songStatus.textContent = 'Song playing...';
+                songStatus.style.color = '#2196f3';
+            }
+        });
+
+        // Function to play the song
+        function playSong() {
+            if (!songAudioBuffer || isSongPlaying) return;
+
+            try {
+                // Create a source node
+                songAudioSource = songAudioContext.createBufferSource();
+                songAudioSource.buffer = songAudioBuffer;
+
+                // Create an analyser node
+                songAudioAnalyser = songAudioContext.createAnalyser();
+                songAudioAnalyser.fftSize = 2048;
+
+                // Create a script processor node for streaming
+                songAudioProcessor = songAudioContext.createScriptProcessor(songChunkSize, 1, 1);
+
+                // Connect the nodes
+                songAudioSource.connect(songAudioAnalyser);
+                songAudioAnalyser.connect(songAudioProcessor);
+                songAudioProcessor.connect(songAudioContext.destination);
+
+                // Set up the audio processing function
+                songAudioProcessor.onaudioprocess = (e) => {
+                    if (isSongPlaying && ws && ws.readyState === WebSocket.OPEN) {
+                        // Get the audio data
+                        const inputData = e.inputBuffer.getChannelData(0);
+
+                        // Downsample for transmission
+                        const downsampledBuffer = downsampleAudio(inputData, songAudioBuffer.sampleRate, 8000);
+
+                        // Convert to base64
+                        const base64Audio = arrayBufferToBase64(downsampledBuffer.buffer);
+
+                        // Send the audio chunk
+                        const message = {
+                            type: 'media-chunk',
+                            mediaType: 'audio',
+                            chunk: base64Audio,
+                            timestamp: Date.now(),
+                            sampleRate: 8000,
+                            format: 'pcm',
+                            isSong: true // Flag to indicate this is a song
+                        };
+
+                        // If a target client is selected, include the targetId
+                        if (window.selectedTargetId) {
+                            message.targetId = window.selectedTargetId;
+                            console.log(`Sending song chunk to target: ${window.selectedTargetId}`);
+                        } else {
+                            console.log('Broadcasting song chunk to room');
+                        }
+
+                        ws.send(JSON.stringify(message));
+                    }
+                };
+
+                // Start playing
+                songAudioSource.start(0);
+                isSongPlaying = true;
+
+                // When the song ends
+                songAudioSource.onended = () => {
+                    stopSong();
+                    playSongBtn.textContent = 'Play Song';
+                    songStatus.textContent = 'Song finished';
+                    songStatus.style.color = '#9e9e9e';
+                };
+
+                console.log('Song playback started');
+            } catch (e) {
+                console.error('Error playing song:', e);
+                songStatus.textContent = 'Error: Could not play song';
+                songStatus.style.color = '#f44336';
+            }
+        }
+
+        // Function to stop the song
+        function stopSong() {
+            if (!isSongPlaying) return;
+
+            try {
+                // Stop the audio source
+                if (songAudioSource) {
+                    songAudioSource.stop();
+                    songAudioSource.disconnect();
+                    songAudioSource = null;
+                }
+
+                // Disconnect and clean up other nodes
+                if (songAudioProcessor) {
+                    songAudioProcessor.disconnect();
+                    songAudioProcessor = null;
+                }
+
+                if (songAudioAnalyser) {
+                    songAudioAnalyser.disconnect();
+                    songAudioAnalyser = null;
+                }
+
+                isSongPlaying = false;
+                console.log('Song playback stopped');
+            } catch (e) {
+                console.error('Error stopping song:', e);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polycloud-websocket
+  namespace: polycloud
+  labels:
+    app: polycloud
+    component: websocket-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: polycloud
+      component: websocket-backend
+  template:
+    metadata:
+      labels:
+        app: polycloud
+        component: websocket-backend
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+      - name: websocket-backend
+        image: duratm/polycloud-websocket:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+          name: http
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3000"
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polycloud-websocket
+  namespace: polycloud
+  labels:
+    app: polycloud
+    component: websocket-backend
+spec:
+    type: ClusterIP
+    ports:
+      - name: http
+        port: 3000
+        targetPort: 3000
+    selector:
+        app: polycloud
+        component: websocket-backend
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: polycloud-websocket
+  namespace: polycloud
+  labels:
+     app: polycloud
+     component: websocket-backend
+spec:
+    hosts:
+      - "polycloud.localhost"
+    gateways:
+      - polycloud-gateway
+    http:
+      - route:
+        - destination:
+            host: polycloud-websocket
+            port:
+              number: 3000
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: polycloud-gateway
+  namespace: polycloud
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "polycloud.localhost"
