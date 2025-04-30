@@ -85,9 +85,9 @@
             <h3>Local Video</h3>
             <video id="localVideo" autoplay muted playsinline></video>
         </div>
-        <div class="video-container">
-            <h3>Remote Video</h3>
-            <video id="remoteVideo" autoplay playsinline></video>
+        <div class="video-container" id="remoteVideosContainer">
+            <h3>Remote Videos</h3>
+            <div id="remoteVideos" style="display: flex; flex-wrap: wrap; gap: 15px; justify-content: center; align-items: flex-start;"></div>
         </div>
     </div>
 
@@ -106,7 +106,7 @@
         const connectionStatus = document.getElementById('connectionStatus');
         const clientsList = document.getElementById('clientsList');
         const localVideo = document.getElementById('localVideo');
-        const remoteVideo = document.getElementById('remoteVideo');
+        const remoteVideosContainer = document.getElementById('remoteVideos');
         const pingBtn = document.getElementById('pingBtn');
         const pingMessage = document.getElementById('pingMessage');
         const pingStatus = document.getElementById('pingStatus');
@@ -237,7 +237,7 @@
                             break;
 
                         case 'ping':
-                            console.log(`Received ping from ${data.senderId}: ${data.message || 'No message'}`);
+
                             // Send pong response back to the sender
                             if (ws && ws.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({
@@ -256,7 +256,7 @@
                             break;
 
                         case 'pong':
-                            console.log(`Received pong: ${data.message}`);
+
                             // Show notification
                             pingStatus.textContent = `Received pong: ${data.message}`;
                             pingStatus.style.color = '#4caf50';
@@ -266,7 +266,7 @@
                             break;
 
                         case 'ping-error':
-                            console.log(`Ping error: ${data.message}`);
+
                             // Show notification
                             pingStatus.textContent = `Ping error: ${data.message}`;
                             pingStatus.style.color = '#f44336';
@@ -276,7 +276,7 @@
                             break;
 
                         case 'ping-info':
-                            console.log(`Ping info: ${data.message}`);
+
                             // Show notification
                             pingStatus.textContent = `Ping info: ${data.message}`;
                             pingStatus.style.color = '#ff9800';
@@ -353,7 +353,7 @@
                 window.captureCanvas.width = settings.width || 640;
                 window.captureCanvas.height = settings.height || 480;
 
-                console.log(`Canvas size set to ${window.captureCanvas.width}x${window.captureCanvas.height}`);
+
 
                 // Create media recorder with simpler codec for compatibility
                 const options = { 
@@ -410,9 +410,7 @@
                             // If a target client is selected, include the targetId
                             if (window.selectedTargetId) {
                                 message.targetId = window.selectedTargetId;
-                                console.log(`Sending frame to target: ${window.selectedTargetId}`);
-                            } else {
-                                console.log(`Broadcasting frame to room`);
+
                             }
 
                             ws.send(JSON.stringify(message));
@@ -432,7 +430,7 @@
                     // Get audio track from media stream
                     const audioTrack = mediaStream.getAudioTracks()[0];
                     if (audioTrack) {
-                        console.log('Audio track found, setting up audio processing');
+
 
                         // Create audio source from media stream
                         audioSource = audioContext.createMediaStreamSource(mediaStream);
@@ -477,7 +475,7 @@
                                 // If a target client is selected, include the targetId
                                 if (window.selectedTargetId) {
                                     message.targetId = window.selectedTargetId;
-                                    console.log(`Sending audio to target: ${window.selectedTargetId}`);
+
                                 }
 
                                 ws.send(JSON.stringify(message));
@@ -552,10 +550,12 @@
             // Clear video elements
             localVideo.srcObject = null;
 
-            // Reset frame image if it exists
-            if (window.frameImage) {
-                window.frameImage.src = '';
-                console.log('Frame image cleared');
+            // Clear all remote video frames
+            const remoteVideosContainer = document.getElementById('remoteVideos');
+            if (remoteVideosContainer) {
+                // Clear the container
+                remoteVideosContainer.innerHTML = '';
+                console.log('All remote video frames cleared');
             }
 
             // Update UI
@@ -594,7 +594,7 @@
         pingBtn.addEventListener('click', () => {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 const message = pingMessage.value.trim();
-                console.log(`Sending ping${message ? ': ' + message : ''}`);
+
 
                 // Create ping message
                 const pingData = {
@@ -606,10 +606,10 @@
                 // If a target client is selected, include the targetId
                 if (window.selectedTargetId) {
                     pingData.targetId = window.selectedTargetId;
-                    console.log(`Sending ping to target: ${window.selectedTargetId}`);
+
                     pingStatus.textContent = `Sending ping to ${window.selectedTargetId}...`;
                 } else {
-                    console.log('Broadcasting ping to room');
+
                     pingStatus.textContent = 'Broadcasting ping to room...';
                 }
 
@@ -633,6 +633,22 @@
         // Update clients list
         function updateClientsList(clients) {
             clientsList.innerHTML = '';
+
+            // Get all current client IDs
+            const currentClientIds = clients.map(client => client.id);
+
+            // Check for disconnected clients and remove their video containers
+            const remoteVideosContainer = document.getElementById('remoteVideos');
+            if (remoteVideosContainer) {
+                const senderContainers = remoteVideosContainer.querySelectorAll('.remote-user-container');
+                senderContainers.forEach(container => {
+                    const senderId = container.id.replace('sender-', '');
+                    if (!currentClientIds.includes(senderId) && senderId !== clientId) {
+                        console.log(`Removing container for disconnected client ${senderId}`);
+                        remoteVideosContainer.removeChild(container);
+                    }
+                });
+            }
 
             // Group clients by room
             const clientsByRoom = {};
@@ -702,7 +718,7 @@
             // If the target is already selected, clear it (toggle behavior)
             if (window.selectedTargetId === targetId) {
                 window.selectedTargetId = null;
-                console.log('Cleared selected target, now broadcasting to room');
+
 
                 // Update UI to show no target is selected
                 const items = clientsList.querySelectorAll('li');
@@ -734,7 +750,7 @@
             } else {
                 // Store target ID in a global variable
                 window.selectedTargetId = targetId;
-                console.log(`Selected client ${targetId} as target`);
+
 
                 // Update UI to show selected target
                 const items = clientsList.querySelectorAll('li');
@@ -771,18 +787,18 @@
         // Handle incoming media chunks
         function handleMediaChunk(data) {
             try {
-                console.log(`Received media chunk from ${data.senderId}, type: ${data.mediaType}, format: ${data.format || 'unknown'}, size: ${data.chunk ? data.chunk.length : 0} bytes`);
+
 
                 // Check if we have valid chunk data
-                if (!data.chunk) {
-                    console.error('Received empty media chunk');
+                if (!data.chunk || !data.senderId) {
+                    console.error('Received empty media chunk or missing sender ID');
                     return;
                 }
 
                 // Ensure the base64 string is properly formatted
                 // Remove any non-base64 characters and ensure proper padding
                 let base64String = data.chunk.replace(/[^A-Za-z0-9+/]/g, '');
-                console.log(`Base64 string length after cleaning: ${base64String.length}`);
+
 
                 // Add padding if needed
                 while (base64String.length % 4 !== 0) {
@@ -794,9 +810,9 @@
                     try {
                         // Check if this is a song chunk
                         if (data.isSong) {
-                            console.log('Processing song chunk from ' + data.senderId);
+
                         } else {
-                            console.log('Processing audio chunk from ' + data.senderId);
+
                         }
 
                         // Convert base64 to ArrayBuffer
@@ -821,7 +837,7 @@
                 try {
                     // Create a blob from the base64 data
                     const byteCharacters = atob(base64String);
-                    console.log(`Decoded byte length: ${byteCharacters.length}`);
+
 
                     const byteNumbers = new Array(byteCharacters.length);
                     for (let i = 0; i < byteCharacters.length; i++) {
@@ -844,51 +860,112 @@
 
                     // Create a blob with the appropriate MIME type
                     const blob = new Blob([byteArray], { type: mimeType });
-                    console.log(`Created blob of size: ${blob.size} bytes, type: ${mimeType}`);
+
 
                     // Create object URL from blob
                     const url = URL.createObjectURL(blob);
-                    console.log(`Created object URL: ${url}`);
 
-                    // Create an image element to display the frame if it doesn't exist
-                    if (!window.frameImage) {
-                        console.log('Creating new image element for frames');
-                        window.frameImage = document.createElement('img');
-                        window.frameImage.style.width = '100%';
-                        window.frameImage.style.height = 'auto';
 
-                        // Clear the video element and replace with the image
-                        const videoContainer = remoteVideo.parentElement;
-                        remoteVideo.style.display = 'none';
-                        videoContainer.appendChild(window.frameImage);
+                    // Get the remote videos container
+                    const remoteVideosContainer = document.getElementById('remoteVideos');
+
+                    // Check if we already have a container for this sender
+                    let senderContainer = document.getElementById(`sender-${data.senderId}`);
+                    let frameImage;
+
+                    // If we don't have a container for this sender, create one
+                    if (!senderContainer) {
+
+
+                        // Create a container for this sender
+                        senderContainer = document.createElement('div');
+                        senderContainer.id = `sender-${data.senderId}`;
+                        senderContainer.className = 'remote-user-container';
+                        senderContainer.style.margin = '5px';
+                        senderContainer.style.padding = '5px';
+                        senderContainer.style.border = '1px solid #ddd';
+                        senderContainer.style.borderRadius = '5px';
+                        senderContainer.style.width = '45%';
+                        senderContainer.style.minWidth = '200px';
+                        senderContainer.style.maxWidth = '400px';
+
+                        // Create a label for this sender
+                        const senderLabel = document.createElement('div');
+                        senderLabel.textContent = `User: ${data.senderId}`;
+                        senderLabel.style.fontWeight = 'bold';
+                        senderLabel.style.marginBottom = '5px';
+                        senderLabel.style.textAlign = 'center';
+
+                        // Create a timestamp element
+                        const timestampLabel = document.createElement('div');
+                        timestampLabel.id = `timestamp-${data.senderId}`;
+                        timestampLabel.style.fontSize = '0.8em';
+                        timestampLabel.style.color = '#666';
+                        timestampLabel.style.textAlign = 'center';
+                        timestampLabel.style.marginTop = '5px';
+
+                        // Create an image element for this sender
+                        frameImage = document.createElement('img');
+                        frameImage.id = `frame-${data.senderId}`;
+                        frameImage.style.width = '100%';
+                        frameImage.style.height = 'auto';
+                        frameImage.style.backgroundColor = '#f0f0f0';
+
+                        // Add the label, image, and timestamp to the container
+                        senderContainer.appendChild(senderLabel);
+                        senderContainer.appendChild(frameImage);
+                        senderContainer.appendChild(timestampLabel);
+
+                        // Add the container to the remote videos container
+                        remoteVideosContainer.appendChild(senderContainer);
+                    } else {
+                        // Get the existing image element for this sender
+                        frameImage = document.getElementById(`frame-${data.senderId}`);
                     }
 
                     // Update the image source with the new frame
-                    window.frameImage.onload = () => {
-                        console.log('Frame image loaded successfully');
+                    frameImage.onload = () => {
+
                         // Revoke the old URL to avoid memory leaks
                         URL.revokeObjectURL(url);
+
+                        // Add a visual indicator that this frame was just updated
+                        senderContainer.style.boxShadow = '0 0 10px rgba(33, 150, 243, 0.8)';
+                        senderContainer.style.transition = 'box-shadow 0.3s ease-in-out';
+
+                        // Update the timestamp
+                        const timestampLabel = document.getElementById(`timestamp-${data.senderId}`);
+                        if (timestampLabel) {
+                            const now = new Date();
+                            const timeString = now.toLocaleTimeString();
+                            timestampLabel.textContent = `Last update: ${timeString}`;
+                        }
+
+                        // Remove the indicator after a short delay
+                        setTimeout(() => {
+                            senderContainer.style.boxShadow = 'none';
+                        }, 500);
                     };
 
-                    window.frameImage.onerror = (e) => {
-                        console.error('Error loading frame image:', e);
+                    frameImage.onerror = (e) => {
+                        console.error(`Error loading frame image for sender ${data.senderId}:`, e);
 
                         // If the current format fails, try the alternative
                         if (mimeType === 'image/jpeg') {
                             const pngBlob = new Blob([byteArray], { type: 'image/png' });
                             const pngUrl = URL.createObjectURL(pngBlob);
-                            console.log('Trying PNG format instead');
-                            window.frameImage.src = pngUrl;
+
+                            frameImage.src = pngUrl;
                         } else {
                             const jpegBlob = new Blob([byteArray], { type: 'image/jpeg' });
                             const jpegUrl = URL.createObjectURL(jpegBlob);
-                            console.log('Trying JPEG format instead');
-                            window.frameImage.src = jpegUrl;
+
+                            frameImage.src = jpegUrl;
                         }
                     };
 
                     // Set the image source to display the frame
-                    window.frameImage.src = url;
+                    frameImage.src = url;
 
                 } catch (decodeError) {
                     console.error('Error decoding base64 or creating blob:', decodeError);
@@ -955,7 +1032,7 @@
             if (!remoteAudioContext) {
                 try {
                     remoteAudioContext = new (window.AudioContext || window.webkitAudioContext)();
-                    console.log('Remote audio context created');
+
                 } catch (e) {
                     console.error('Failed to create remote audio context:', e);
                     return;
@@ -977,7 +1054,7 @@
                 source.buffer = audioBuffer;
                 source.connect(remoteAudioContext.destination);
                 source.start(0);
-                console.log('Playing audio chunk');
+
 
                 // Store reference to clean up later
                 remoteAudioSource = source;
@@ -1024,7 +1101,7 @@
                         songAudioBuffer = buffer;
                         songStatus.textContent = `Song loaded: ${file.name} (${Math.round(buffer.duration)}s)`;
                         songStatus.style.color = '#4caf50';
-                        console.log(`Song loaded: ${file.name}, duration: ${buffer.duration}s, sample rate: ${buffer.sampleRate}Hz, channels: ${buffer.numberOfChannels}`);
+
                     })
                     .catch(err => {
                         console.error('Error decoding audio data:', err);
@@ -1110,9 +1187,9 @@
                         // If a target client is selected, include the targetId
                         if (window.selectedTargetId) {
                             message.targetId = window.selectedTargetId;
-                            console.log(`Sending song chunk to target: ${window.selectedTargetId}`);
+
                         } else {
-                            console.log('Broadcasting song chunk to room');
+
                         }
 
                         ws.send(JSON.stringify(message));
@@ -1131,7 +1208,7 @@
                     songStatus.style.color = '#9e9e9e';
                 };
 
-                console.log('Song playback started');
+
             } catch (e) {
                 console.error('Error playing song:', e);
                 songStatus.textContent = 'Error: Could not play song';
@@ -1163,7 +1240,7 @@
                 }
 
                 isSongPlaying = false;
-                console.log('Song playback stopped');
+
             } catch (e) {
                 console.error('Error stopping song:', e);
             }

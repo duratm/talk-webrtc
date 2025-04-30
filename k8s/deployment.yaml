@@ -1,3 +1,11 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  creationTimestamp: null
+  name: polycloud
+spec: {}
+status: {}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -80,7 +88,7 @@ metadata:
      component: websocket-backend
 spec:
     hosts:
-      - "polycloud.localhost"
+      - "*"
     gateways:
       - polycloud-gateway
     http:
@@ -104,4 +112,4 @@ spec:
         name: http
         protocol: HTTP
       hosts:
-        - "polycloud.localhost"
+        - "*"
