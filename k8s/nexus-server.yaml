@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: polycloud-nexus
+  namespace: polycloud-nexus
+  labels:
+    app.kubernetes.io/name: polycloud-nexus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 4000
+      targetPort: 4000
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: polycloud-nexus
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polycloud-nexus
+  namespace: polycloud-nexus
+  labels:
+    app.kubernetes.io/name: polycloud-nexus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: polycloud-nexus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: polycloud-nexus
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      terminationGracePeriodSeconds: 18000 # 5 hours
+      containers:
+        - name: polycloud-nexus
+          image: "duratm/nexxus:latest"
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: SECRET_KEY_BASE
+            value: f0e01531666a6ccd5b15879a3c00a15f8feaaea86230cf35d96fe0b8e468bc553549e47edb737a4d1530d1c56a3a7a3827443e1bd00aa46adb44dc6aa087ff9f
+          - name: PHX_SERVER
+            value: "1"
+          - name: PHX_HOST
+            value: nexus.duratm.com
+          - name: ADMIN_USERNAME
+            value: admin
+          - name: ADMIN_PASSWORD
+            value: admin
+          - name: ICE_PORT_RANGE
+            value: 62000-63000
+          - name: NEXUS_POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          ports:
+            - name: http
+              containerPort: 4000
+              protocol: TCP
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: polycloud-nexus
+  namespace: polycloud-nexus
+  labels:
+     app: polycloud
+     component: websocket-backend
+spec:
+    hosts:
+      - "nexus.duratm.com"
+    gateways:
+      - nexus-gateway
+    http:
+      - route:
+        - destination:
+            host: polycloud-nexus
+            port:
+              number: 4000
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: nexus-gateway
+  namespace: polycloud-nexus
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "nexus.duratm.com"
