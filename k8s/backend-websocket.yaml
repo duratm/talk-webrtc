@@ -1,16 +1,14 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  creationTimestamp: null
-  name: polycloud
+  name: polycloud-websocket
 spec: {}
-status: {}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: polycloud-websocket
-  namespace: polycloud
+  namespace: polycloud-websocket
   labels:
     app: polycloud
     component: websocket-backend
@@ -64,7 +62,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: polycloud-websocket
-  namespace: polycloud
+  namespace: polycloud-websocket
   labels:
     app: polycloud
     component: websocket-backend
@@ -82,15 +80,15 @@ apiVersion: networking.istio.io/v1
 kind: VirtualService
 metadata:
   name: polycloud-websocket
-  namespace: polycloud
+  namespace: polycloud-websocket
   labels:
      app: polycloud
      component: websocket-backend
 spec:
     hosts:
-      - "*"
+      - "websocket.duratm.com"
     gateways:
-      - polycloud-gateway
+      - websocket-gateway
     http:
       - route:
         - destination:
@@ -101,8 +99,8 @@ spec:
 apiVersion: networking.istio.io/v1
 kind: Gateway
 metadata:
-  name: polycloud-gateway
-  namespace: polycloud
+  name: websocket-gateway
+  namespace: polycloud-websocket
 spec:
   selector:
     istio: ingressgateway # use istio default controller
@@ -112,4 +110,4 @@ spec:
         name: http
         protocol: HTTP
       hosts:
-        - "*"
+        - "websocket.duratm.com"

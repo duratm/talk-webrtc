@@ -1,0 +1,177 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: polycloud-rust-sfu
+spec: {}
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: rust-sfu-gateway
+  namespace: polycloud-rust-sfu
+spec:
+  selector:
+    istio: ingressgateway # use istio default controller
+  servers:
+    - port:
+        number: 80
+        name: http
+        protocol: HTTP
+      hosts:
+        - "rust-sfu.duratm.com"
+        - "rust-sfu-frontend.duratm.com"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polycloud-rust-sfu
+  namespace: polycloud-rust-sfu
+  labels:
+    app: polycloud
+    component: rust-sfu-backend
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+          app: polycloud
+          component: rust-sfu-backend
+    template:
+        metadata:
+          labels:
+              app: polycloud
+              component: rust-sfu-backend
+          annotations:
+              sidecar.istio.io/inject: "true"
+        spec:
+          hostNetwork: true
+          containers:
+          - name: rust-sfu-backend
+            image: duratm/polycloud-rust-sfu:latest
+            imagePullPolicy: Always
+            ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+            - containerPort: 33436
+              name: port-33436
+              protocol: UDP
+            env:
+            - name: IP_ENDPOINT
+              value: "162.38.112.223"
+            - name: VALUE_PORT_MIN
+              value: "33436"
+            - name: VALUE_PORT_MAX
+              value: "33436"
+            - name: SIGNAL_PORT
+              value: "8080"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polycloud-rust-sfu
+  namespace: polycloud-rust-sfu
+  labels:
+    app: polycloud
+    component: rust-sfu-backend
+spec:
+    type: ClusterIP
+    ports:
+        - name: http
+          port: 8080
+          targetPort: 8080
+        - name: port-33436
+          port: 33436
+          targetPort: 33436
+    selector:
+        app: polycloud
+        component: rust-sfu-backend
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: polycloud-rust-sfu
+  namespace: polycloud-rust-sfu
+  labels:
+    app: polycloud
+    component: websocket-rust-sfu
+spec:
+  hosts:
+    - "rust-sfu.duratm.com"
+  gateways:
+    - rust-sfu-gateway
+  http:
+    - route:
+        - destination:
+            host: polycloud-rust-sfu
+            port:
+              number: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: polycloud-rust-sfu-frontend
+  namespace: polycloud-rust-sfu
+  labels:
+    app: polycloud
+    component: rust-sfu-frontend
+spec:
+    replicas: 1
+    selector:
+      matchLabels:
+        app: polycloud
+        component: rust-sfu-frontend
+    template:
+        metadata:
+          labels:
+              app: polycloud
+              component: rust-sfu-frontend
+          annotations:
+              sidecar.istio.io/inject: "true"
+        spec:
+          hostNetwork: true
+          containers:
+          - name: rust-sfu-frontend
+            image: duratm/polycloud-rust-sfu:frontend
+            imagePullPolicy: Always
+            ports:
+            - containerPort: 3000
+              name: http
+              protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: polycloud-rust-sfu-frontend
+  namespace: polycloud-rust-sfu
+  labels:
+    app: polycloud
+    component: rust-sfu-frontend
+spec:
+    type: ClusterIP
+    ports:
+        - name: http
+          port: 3000
+          targetPort: 3000
+    selector:
+        app: polycloud
+        component: rust-sfu-frontend
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: polycloud-rust-sfu-frontend
+  namespace: polycloud-rust-sfu
+  labels:
+    app: polycloud
+    component: rust-sfu-frontend
+spec:
+    hosts:
+        - "rust-sfu-frontend.duratm.com"
+    gateways:
+        - rust-sfu-gateway
+    http:
+        - route:
+            - destination:
+                host: polycloud-rust-sfu-frontend
+                port:
+                  number: 3000
