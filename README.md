@@ -21,4 +21,4 @@ The repository is organized into the following directories:
 - `backend-websocket/` - WebSocket-based implementation
 - `backend-rust-sfu/` - Rust SFU server implementation
 - `backend-elixir-sfu/` - Elixir SFU server implementation
-- `frontend/` - Frontend implementations for each backend approach
+- `k8s/` - Kubernetes deployment files for each backend
